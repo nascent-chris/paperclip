@@ -2406,7 +2406,7 @@ function LogViewer({ run, adapterType }: { run: HeartbeatRun; adapterType: strin
 
   const adapterInvokePayload = useMemo(() => {
     const evt = events.find((e) => e.eventType === "adapter.invoke");
-    return redactHomePathUserSegmentsInValue(asRecord(evt?.payload ?? null));
+    return asRecord(evt?.payload ?? null);
   }, [events]);
 
   const adapter = useMemo(() => getUIAdapter(adapterType), [adapterType]);
@@ -2469,7 +2469,7 @@ function LogViewer({ run, adapterType }: { run: HeartbeatRun; adapterType: strin
                   .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
                   .map((note, idx) => (
                     <li key={`${idx}-${note}`} className="text-xs break-all font-mono">
-                      {note}
+                      {redactHomePathUserSegments(note)}
                     </li>
                   ))}
               </ul>

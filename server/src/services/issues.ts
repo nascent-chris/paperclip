@@ -816,7 +816,8 @@ export function issueService(db: Db) {
       if (nextAssigneeAgentId && nextAssigneeUserId) {
         throw unprocessable("Issue can only have one assignee");
       }
-      if (patch.status === "in_progress" && !nextAssigneeAgentId && !nextAssigneeUserId) {
+      // Only require assignee when transitioning TO in_progress, not when transitioning FROM it
+      if (patch.status === "in_progress" && existing.status !== "in_progress" && !nextAssigneeAgentId && !nextAssigneeUserId) {
         throw unprocessable("in_progress issues require an assignee");
       }
       if (issueData.assigneeAgentId) {
@@ -1450,7 +1451,15 @@ export function issueService(db: Db) {
       if (tokens.size === 0) return [];
       const rows = await db.select({ id: agents.id, name: agents.name })
         .from(agents).where(eq(agents.companyId, companyId));
-      return rows.filter(a => tokens.has(a.name.toLowerCase())).map(a => a.id);
+      // Exact match first
+      const exactMatches = rows.filter(a => tokens.has(a.name.toLowerCase())).map(a => a.id);
+      if (exactMatches.length > 0) return exactMatches;
+      // Prefix match for multi-word names: @Founding matches "Founding Engineer"
+      const prefixMatches = rows.filter(a => {
+        const agentNameLower = a.name.toLowerCase();
+        return Array.from(tokens).some(token => agentNameLower.startsWith(token) || agentNameLower.includes(token));
+      }).map(a => a.id);
+      return prefixMatches;
     },
 
     findMentionedProjectIds: async (issueId: string) => {

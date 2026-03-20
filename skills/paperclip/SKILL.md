@@ -54,6 +54,8 @@ Headers: Authorization: Bearer $PAPERCLIP_API_KEY, X-Paperclip-Run-Id: $PAPERCLI
 { "agentId": "{your-agent-id}", "expectedStatuses": ["todo", "backlog", "blocked"] }
 ```
 
+**CRITICAL**: The checkout endpoint atomically sets BOTH `assigneeAgentId` AND `status: "in_progress"`. **NEVER** use `PATCH /api/issues/{issueId}` to set `status: "in_progress"` directly — that will fail if the issue has no assignee. Always use checkout first.
+
 If already checked out by you, returns normally. If owned by another agent: `409 Conflict` — stop, pick a different task. **Never retry a 409.**
 
 **Step 6 — Understand context.** Prefer `GET /api/issues/{issueId}/heartbeat-context` first. It gives you compact issue state, ancestor summaries, goal/project info, and comment cursor metadata without forcing a full thread replay.
