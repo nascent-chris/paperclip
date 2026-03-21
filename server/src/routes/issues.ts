@@ -112,6 +112,33 @@ export function issueRoutes(db: Db, storage: StorageService) {
     throw unauthorized();
   }
 
+  function isAgentAssigningToSelf(
+    req: Request,
+    assigneeAgentId: string | null | undefined,
+    assigneeUserId: string | null | undefined,
+  ) {
+    return req.actor.type === "agent"
+      && !!req.actor.agentId
+      && assigneeAgentId === req.actor.agentId
+      && (assigneeUserId === null || assigneeUserId === undefined);
+  }
+
+  function canAgentSelfAssignOwnUnassignedIssue(
+    req: Request,
+    issue: {
+      createdByAgentId: string | null;
+      assigneeAgentId: string | null;
+      assigneeUserId: string | null;
+    },
+    assigneeAgentId: string | null | undefined,
+    assigneeUserId: string | null | undefined,
+  ) {
+    return isAgentAssigningToSelf(req, assigneeAgentId, assigneeUserId)
+      && issue.createdByAgentId === req.actor.agentId
+      && issue.assigneeAgentId === null
+      && issue.assigneeUserId === null;
+  }
+
   function requireAgentRunId(req: Request, res: Response) {
     if (req.actor.type !== "agent") return null;
     const runId = req.actor.runId?.trim();
@@ -752,7 +779,12 @@ export function issueRoutes(db: Db, storage: StorageService) {
   router.post("/companies/:companyId/issues", validate(createIssueSchema), async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
-    if (req.body.assigneeAgentId || req.body.assigneeUserId) {
+    const isAgentCreatingIssueAssignedToSelf = isAgentAssigningToSelf(
+      req,
+      req.body.assigneeAgentId,
+      req.body.assigneeUserId,
+    );
+    if ((req.body.assigneeAgentId || req.body.assigneeUserId) && !isAgentCreatingIssueAssignedToSelf) {
       await assertCanAssignTasks(req, companyId);
     }
 
@@ -812,9 +844,15 @@ export function issueRoutes(db: Db, storage: StorageService) {
       typeof req.body.assigneeUserId === "string" &&
       !!existing.createdByUserId &&
       req.body.assigneeUserId === existing.createdByUserId;
+    const isAgentSelfAssigningOwnUnassignedIssue = canAgentSelfAssignOwnUnassignedIssue(
+      req,
+      existing,
+      req.body.assigneeAgentId,
+      req.body.assigneeUserId,
+    );
 
     if (assigneeWillChange) {
-      if (!isAgentReturningIssueToCreator) {
+      if (!isAgentReturningIssueToCreator && !isAgentSelfAssigningOwnUnassignedIssue) {
         await assertCanAssignTasks(req, existing.companyId);
       }
     }
