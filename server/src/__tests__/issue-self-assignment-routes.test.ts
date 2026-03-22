@@ -27,24 +27,33 @@ const mockAgentService = vi.hoisted(() => ({
 }));
 
 const mockHeartbeatService = vi.hoisted(() => ({
+  reportRunActivity: vi.fn(),
   wakeup: vi.fn(),
 }));
 
 const mockLogActivity = vi.hoisted(() => vi.fn());
 
-vi.mock("../services/index.js", () => ({
-  accessService: () => mockAccessService,
-  agentService: () => mockAgentService,
-  documentService: () => ({}),
-  executionWorkspaceService: () => ({}),
-  goalService: () => ({}),
-  heartbeatService: () => mockHeartbeatService,
-  issueApprovalService: () => ({}),
-  issueService: () => mockIssueService,
-  logActivity: mockLogActivity,
-  projectService: () => ({}),
-  workProductService: () => ({}),
-}));
+vi.mock("../services/index.js", async () => {
+  const actual = await vi.importActual<typeof import("../services/index.js")>("../services/index.js");
+
+  return {
+    ...actual,
+    accessService: () => mockAccessService,
+    agentService: () => mockAgentService,
+    documentService: () => ({}),
+    executionWorkspaceService: () => ({}),
+    goalService: () => ({}),
+    heartbeatService: () => mockHeartbeatService,
+    issueApprovalService: () => ({}),
+    issueService: () => mockIssueService,
+    logActivity: mockLogActivity,
+    projectService: () => ({}),
+    routineService: () => ({
+      syncRunStatusForIssue: vi.fn(),
+    }),
+    workProductService: () => ({}),
+  };
+});
 
 function createAgentApp() {
   const app = express();
@@ -90,6 +99,7 @@ describe("issue assignment permissions", () => {
       role: "researcher",
       permissions: null,
     });
+    mockHeartbeatService.reportRunActivity.mockResolvedValue(undefined);
     mockHeartbeatService.wakeup.mockResolvedValue(undefined);
     mockLogActivity.mockResolvedValue(undefined);
   });
