@@ -30,24 +30,33 @@ const mockAgentService = vi.hoisted(() => ({
 
 const mockHeartbeatService = vi.hoisted(() => ({
   getRun: vi.fn(),
+  reportRunActivity: vi.fn(),
   wakeup: vi.fn(),
 }));
 
 const mockLogActivity = vi.hoisted(() => vi.fn());
 
-vi.mock("../services/index.js", () => ({
-  accessService: () => mockAccessService,
-  agentService: () => mockAgentService,
-  documentService: () => ({}),
-  executionWorkspaceService: () => ({}),
-  goalService: () => ({}),
-  heartbeatService: () => mockHeartbeatService,
-  issueApprovalService: () => ({}),
-  issueService: () => mockIssueService,
-  logActivity: mockLogActivity,
-  projectService: () => ({}),
-  workProductService: () => ({}),
-}));
+vi.mock("../services/index.js", async () => {
+  const actual = await vi.importActual<typeof import("../services/index.js")>("../services/index.js");
+
+  return {
+    ...actual,
+    accessService: () => mockAccessService,
+    agentService: () => mockAgentService,
+    documentService: () => ({}),
+    executionWorkspaceService: () => ({}),
+    goalService: () => ({}),
+    heartbeatService: () => mockHeartbeatService,
+    issueApprovalService: () => ({}),
+    issueService: () => mockIssueService,
+    logActivity: mockLogActivity,
+    projectService: () => ({}),
+    routineService: () => ({
+      syncRunStatusForIssue: vi.fn(),
+    }),
+    workProductService: () => ({}),
+  };
+});
 
 function createAgentApp({
   agentId = CEO_AGENT_ID,
@@ -79,6 +88,7 @@ describe("issue manager control routes", () => {
     mockAccessService.canUser.mockResolvedValue(false);
     mockAccessService.hasPermission.mockResolvedValue(false);
     mockHeartbeatService.getRun.mockResolvedValue(null);
+    mockHeartbeatService.reportRunActivity.mockResolvedValue(undefined);
     mockHeartbeatService.wakeup.mockResolvedValue(undefined);
     mockLogActivity.mockResolvedValue(undefined);
   });

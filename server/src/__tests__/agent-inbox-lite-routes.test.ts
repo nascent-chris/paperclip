@@ -11,18 +11,25 @@ const mockIssueService = vi.hoisted(() => ({
   list: vi.fn(),
 }));
 
-vi.mock("../services/index.js", () => ({
-  accessService: () => ({}),
-  agentService: () => ({}),
-  approvalService: () => ({}),
-  budgetService: () => ({}),
-  heartbeatService: () => ({}),
-  issueApprovalService: () => ({}),
-  issueService: () => mockIssueService,
-  logActivity: vi.fn(),
-  secretService: () => ({}),
-  workspaceOperationService: () => ({}),
-}));
+vi.mock("../services/index.js", async () => {
+  const actual = await vi.importActual<typeof import("../services/index.js")>("../services/index.js");
+
+  return {
+    ...actual,
+    accessService: () => ({}),
+    agentInstructionsService: () => ({}),
+    agentService: () => ({}),
+    approvalService: () => ({}),
+    budgetService: () => ({}),
+    companySkillService: () => ({}),
+    heartbeatService: () => ({}),
+    issueApprovalService: () => ({}),
+    issueService: () => mockIssueService,
+    logActivity: vi.fn(),
+    secretService: () => ({}),
+    workspaceOperationService: () => ({}),
+  };
+});
 
 function createAgentApp() {
   const app = express();

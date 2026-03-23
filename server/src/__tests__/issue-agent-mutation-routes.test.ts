@@ -25,34 +25,43 @@ const mockDocumentService = vi.hoisted(() => ({
 
 const mockHeartbeatService = vi.hoisted(() => ({
   getRun: vi.fn(),
+  reportRunActivity: vi.fn(),
   wakeup: vi.fn(),
 }));
 
 const mockLogActivity = vi.hoisted(() => vi.fn());
 
-vi.mock("../services/index.js", () => ({
-  accessService: () => ({
-    canUser: vi.fn(),
-    hasPermission: vi.fn(),
-  }),
-  agentService: () => ({
-    getById: vi.fn(),
-  }),
-  documentService: () => mockDocumentService,
-  executionWorkspaceService: () => ({}),
-  goalService: () => ({}),
-  heartbeatService: () => mockHeartbeatService,
-  issueApprovalService: () => ({}),
-  issueService: () => mockIssueService,
-  logActivity: mockLogActivity,
-  projectService: () => ({}),
-  workProductService: () => ({
-    createForIssue: vi.fn(),
-    getById: vi.fn(),
-    remove: vi.fn(),
-    update: vi.fn(),
-  }),
-}));
+vi.mock("../services/index.js", async () => {
+  const actual = await vi.importActual<typeof import("../services/index.js")>("../services/index.js");
+
+  return {
+    ...actual,
+    accessService: () => ({
+      canUser: vi.fn(),
+      hasPermission: vi.fn(),
+    }),
+    agentService: () => ({
+      getById: vi.fn(),
+    }),
+    documentService: () => mockDocumentService,
+    executionWorkspaceService: () => ({}),
+    goalService: () => ({}),
+    heartbeatService: () => mockHeartbeatService,
+    issueApprovalService: () => ({}),
+    issueService: () => mockIssueService,
+    logActivity: mockLogActivity,
+    projectService: () => ({}),
+    routineService: () => ({
+      syncRunStatusForIssue: vi.fn(),
+    }),
+    workProductService: () => ({
+      createForIssue: vi.fn(),
+      getById: vi.fn(),
+      remove: vi.fn(),
+      update: vi.fn(),
+    }),
+  };
+});
 
 function createAgentApp() {
   const app = express();
@@ -109,6 +118,7 @@ describe("issue agent mutation guards", () => {
     vi.clearAllMocks();
     mockIssueService.findMentionedAgents.mockResolvedValue([]);
     mockHeartbeatService.getRun.mockResolvedValue(null);
+    mockHeartbeatService.reportRunActivity.mockResolvedValue(undefined);
     mockHeartbeatService.wakeup.mockResolvedValue(undefined);
     mockLogActivity.mockResolvedValue(undefined);
   });
