@@ -331,4 +331,98 @@ describe("codex execute", () => {
       await fs.rm(root, { recursive: true, force: true });
     }
   });
+
+  it("writes fresh Paperclip fallback files into AGENT_HOME and notes them in the prompt", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-codex-execute-fallback-"));
+    const workspace = path.join(root, "workspace");
+    const agentHome = path.join(root, "agent-home");
+    const commandPath = path.join(root, "codex");
+    const capturePath = path.join(root, "capture.json");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(agentHome, { recursive: true });
+    await fs.writeFile(path.join(agentHome, ".paperclip_context.json"), '{"issue":{"id":"stale-task"}}\n', "utf8");
+    await fs.writeFile(path.join(agentHome, ".paperclip_inbox.json"), '[{"id":"stale-task"}]\n', "utf8");
+    await fs.writeFile(path.join(agentHome, ".paperclip_me.json"), '{"id":"stale-agent"}\n', "utf8");
+    await writeFakeCodexCommand(commandPath);
+
+    const result = await execute({
+      runId: "run-fallback",
+      agent: {
+        id: "agent-1",
+        companyId: "company-1",
+        name: "Codex Coder",
+        adapterType: "codex_local",
+        adapterConfig: {},
+      },
+      runtime: {
+        sessionId: null,
+        sessionParams: null,
+        sessionDisplayId: null,
+        taskKey: null,
+      },
+      config: {
+        command: commandPath,
+        cwd: workspace,
+        env: {
+          PAPERCLIP_TEST_CAPTURE_PATH: capturePath,
+          PAPERCLIP_API_URL: "http://127.0.0.1:9",
+        },
+        promptTemplate: "Follow the paperclip heartbeat.",
+      },
+      context: {
+        taskId: "task-123",
+        wakeReason: "issue_assigned",
+        paperclipWorkspace: {
+          cwd: workspace,
+          source: "project_primary",
+          strategy: "project_primary",
+          workspaceId: "workspace-1",
+          agentHome,
+        },
+      },
+      onLog: async () => {},
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.errorMessage).toBeNull();
+
+    const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+    expect(capture.prompt).toContain(".paperclip_runtime.json");
+    expect(capture.prompt).toContain("taskId=task-123");
+
+    const runtimePayload = JSON.parse(
+      await fs.readFile(path.join(agentHome, ".paperclip_runtime.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(runtimePayload).toMatchObject({
+      apiUrl: "http://127.0.0.1:9",
+      runId: "run-fallback",
+      taskId: "task-123",
+      wakeReason: "issue_assigned",
+    });
+
+    const mePayload = JSON.parse(
+      await fs.readFile(path.join(agentHome, ".paperclip_me.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(mePayload).toMatchObject({
+      id: "agent-1",
+      companyId: "company-1",
+      name: "Codex Coder",
+    });
+
+    const inboxPayload = JSON.parse(
+      await fs.readFile(path.join(agentHome, ".paperclip_inbox.json"), "utf8"),
+    ) as unknown[];
+    expect(inboxPayload).toEqual([]);
+
+    const contextPayload = JSON.parse(
+      await fs.readFile(path.join(agentHome, ".paperclip_context.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(contextPayload).toMatchObject({
+      issue: {
+        id: "task-123",
+      },
+    });
+
+    await fs.rm(root, { recursive: true, force: true });
+  });
 });
