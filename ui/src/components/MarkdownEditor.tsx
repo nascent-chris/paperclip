@@ -481,9 +481,11 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 
   const selectMention = useCallback(
     (option: MentionOption) => {
-      // Read from ref to avoid stale-closure issues (selectionchange can
-      // update state between the last render and this callback firing).
-      const state = mentionStateRef.current;
+      // Re-read the live mention span at selection time so fast key sequences
+      // (for example typing "@CE" and immediately pressing Tab) don't use a
+      // stale async snapshot that only captured "@C".
+      const liveState = containerRef.current ? detectMention(containerRef.current) : null;
+      const state = liveState ?? mentionStateRef.current;
       if (!state) return;
 
       const replaced = mentionSelectionRef.current?.replaceRange(state, option) ?? false;
