@@ -18,11 +18,22 @@ Env vars auto-injected: `PAPERCLIP_AGENT_ID`, `PAPERCLIP_COMPANY_ID`, `PAPERCLIP
 
 Manual local CLI mode (outside heartbeat runs): use `paperclipai agent local-cli <agent-id-or-shortname> --company-id <company-id>` to install Paperclip skills for Claude/Codex and print/export the required `PAPERCLIP_*` environment variables for that agent identity.
 
+If `PAPERCLIP_*` env vars are missing but `AGENT_HOME` is set, check for Paperclip fallback files written by local adapters. When present, use them as the source of truth for this heartbeat:
+
+- `$AGENT_HOME/.paperclip_runtime.json` — `apiUrl`, `runId`, `taskId`, wake metadata, and workspace metadata
+- `$AGENT_HOME/.paperclip_me.json` — current agent identity
+- `$AGENT_HOME/.paperclip_inbox.json` — current inbox-lite snapshot
+- `$AGENT_HOME/.paperclip_context.json` — current heartbeat-context snapshot for the active issue when available
+
+If a later instruction says “use `$PAPERCLIP_*`”, substitute the value from `.paperclip_runtime.json` / `.paperclip_me.json` when the env var is absent. Prefer these fallback files over stale local memory or older ad hoc snapshots.
+
 If `PAPERCLIP_API_KEY` is missing during a `local_trusted` heartbeat, recover it through the local board path instead of leaving the workspace:
 
 - `POST /api/agents/{PAPERCLIP_AGENT_ID}/keys` with no bearer token and a JSON body such as `{ "name": "heartbeat-$PAPERCLIP_RUN_ID" }`
 - read the returned `token` and use it as `Authorization: Bearer $PAPERCLIP_API_KEY` for agent-authenticated calls
 - keep the returned `id` and revoke it before exit with `DELETE /api/agents/{PAPERCLIP_AGENT_ID}/keys/{keyId}` without a bearer token
+
+If the env vars are missing too, load `agentId`, `apiUrl`, and `runId` from the fallback files above before creating the temporary key.
 
 Do not use `paperclipai agent local-cli`, `pnpm paperclipai`, `/tmp`, or other external directories to bootstrap auth from inside a heartbeat. That fallback is for manual local CLI work, not for sandboxed local agent heartbeats.
 

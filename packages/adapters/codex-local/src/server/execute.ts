@@ -68,6 +68,260 @@ function resolveCodexBiller(env: Record<string, string>, billingType: "api" | "s
   return billingType === "subscription" ? "chatgpt" : openAiCompatibleBiller ?? "openai";
 }
 
+type PaperclipFallbackFiles = {
+  runtimePath: string;
+  mePath: string;
+  inboxPath: string;
+  contextPath: string;
+};
+
+function resolvePaperclipFallbackFiles(agentHome: string): PaperclipFallbackFiles {
+  return {
+    runtimePath: path.join(agentHome, ".paperclip_runtime.json"),
+    mePath: path.join(agentHome, ".paperclip_me.json"),
+    inboxPath: path.join(agentHome, ".paperclip_inbox.json"),
+    contextPath: path.join(agentHome, ".paperclip_context.json"),
+  };
+}
+
+async function writeJsonFile(filePath: string, value: unknown): Promise<void> {
+  await fs.writeFile(filePath, `${JSON.stringify(value)}\n`, "utf8");
+  await fs.chmod(filePath, 0o600).catch(() => {});
+}
+
+async function fetchPaperclipJson(
+  apiUrl: string | null,
+  pathName: string,
+  authToken: string | undefined,
+): Promise<unknown | null> {
+  if (!apiUrl || !authToken) return null;
+  try {
+    const res = await fetch(new URL(pathName, apiUrl), {
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${authToken}`,
+      },
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+function selectFallbackIssueId(
+  wakeTaskId: string | null,
+  inboxPayload: unknown,
+): string | null {
+  if (wakeTaskId) return wakeTaskId;
+  if (!Array.isArray(inboxPayload)) return null;
+
+  const inboxEntries = inboxPayload.filter(
+    (value): value is Record<string, unknown> => typeof value === "object" && value !== null,
+  );
+  const preferred =
+    inboxEntries.find((issue) => issue.status === "in_progress")
+    ?? inboxEntries.find((issue) => issue.status === "todo")
+    ?? inboxEntries[0];
+  if (!preferred) return null;
+  return typeof preferred.id === "string" && preferred.id.trim().length > 0 ? preferred.id.trim() : null;
+}
+
+function buildFallbackContext(
+  issueId: string | null,
+  inboxPayload: unknown,
+  heartbeatContextPayload: unknown,
+) {
+  if (heartbeatContextPayload && typeof heartbeatContextPayload === "object") {
+    return heartbeatContextPayload;
+  }
+
+  const selectedIssue =
+    Array.isArray(inboxPayload)
+      ? inboxPayload.find(
+          (value) =>
+            typeof value === "object"
+            && value !== null
+            && typeof value.id === "string"
+            && value.id === issueId,
+        )
+      : null;
+  const selectedIssueRecord =
+    typeof selectedIssue === "object" && selectedIssue !== null
+      ? selectedIssue as Record<string, unknown>
+      : null;
+
+  return {
+    issue: issueId
+      ? {
+          id: issueId,
+          identifier:
+            selectedIssueRecord && typeof selectedIssueRecord.identifier === "string"
+              ? selectedIssueRecord.identifier
+              : null,
+          title:
+            selectedIssueRecord && typeof selectedIssueRecord.title === "string"
+              ? selectedIssueRecord.title
+              : null,
+          status:
+            selectedIssueRecord && typeof selectedIssueRecord.status === "string"
+              ? selectedIssueRecord.status
+              : null,
+          updatedAt:
+            selectedIssueRecord && typeof selectedIssueRecord.updatedAt === "string"
+              ? selectedIssueRecord.updatedAt
+              : null,
+        }
+      : null,
+    ancestors: [],
+    project: null,
+    goal: null,
+    commentCursor: {
+      totalComments: 0,
+      latestCommentId: null,
+      latestCommentAt: null,
+    },
+    wakeComment: null,
+  };
+}
+
+async function writePaperclipFallbackFiles(input: {
+  agentHome: string;
+  agent: AdapterExecutionContext["agent"];
+  env: Record<string, string>;
+  runId: string;
+  wakeTaskId: string | null;
+  wakeReason: string | null;
+  wakeCommentId: string | null;
+  approvalId: string | null;
+  approvalStatus: string | null;
+  linkedIssueIds: string[];
+  workspaceCwd: string;
+  workspaceSource: string;
+  workspaceStrategy: string;
+  workspaceId: string;
+  workspaceRepoUrl: string;
+  workspaceRepoRef: string;
+  workspaceBranch: string;
+  workspaceWorktreePath: string;
+  authToken?: string;
+  onLog: AdapterExecutionContext["onLog"];
+}): Promise<PaperclipFallbackFiles> {
+  const {
+    agentHome,
+    agent,
+    env,
+    runId,
+    wakeTaskId,
+    wakeReason,
+    wakeCommentId,
+    approvalId,
+    approvalStatus,
+    linkedIssueIds,
+    workspaceCwd,
+    workspaceSource,
+    workspaceStrategy,
+    workspaceId,
+    workspaceRepoUrl,
+    workspaceRepoRef,
+    workspaceBranch,
+    workspaceWorktreePath,
+    authToken,
+    onLog,
+  } = input;
+
+  await fs.mkdir(agentHome, { recursive: true });
+  const files = resolvePaperclipFallbackFiles(agentHome);
+  const apiUrl =
+    typeof env.PAPERCLIP_API_URL === "string" && env.PAPERCLIP_API_URL.trim().length > 0
+      ? env.PAPERCLIP_API_URL.trim()
+      : null;
+
+  const mePayload = (await fetchPaperclipJson(apiUrl, "/api/agents/me", authToken)) ?? {
+    ...agent,
+    generatedAt: new Date().toISOString(),
+  };
+  const inboxPayload = (await fetchPaperclipJson(apiUrl, "/api/agents/me/inbox-lite", authToken)) ?? [];
+  const contextIssueId = selectFallbackIssueId(wakeTaskId, inboxPayload);
+  const heartbeatContextPayload =
+    contextIssueId
+      ? await fetchPaperclipJson(apiUrl, `/api/issues/${contextIssueId}/heartbeat-context`, authToken)
+      : null;
+
+  const runtimePayload = {
+    generatedAt: new Date().toISOString(),
+    source: "paperclip_codex_local_fallback",
+    apiUrl,
+    runId,
+    taskId: wakeTaskId,
+    issueId: wakeTaskId,
+    wakeReason,
+    wakeCommentId,
+    approvalId,
+    approvalStatus,
+    linkedIssueIds,
+    agent: {
+      id: agent.id,
+      companyId: agent.companyId,
+      name: agent.name,
+    },
+    workspace: {
+      cwd: workspaceCwd || null,
+      source: workspaceSource || null,
+      strategy: workspaceStrategy || null,
+      workspaceId: workspaceId || null,
+      repoUrl: workspaceRepoUrl || null,
+      repoRef: workspaceRepoRef || null,
+      branchName: workspaceBranch || null,
+      worktreePath: workspaceWorktreePath || null,
+      agentHome,
+    },
+    fallbackContextIssueId: contextIssueId,
+    files,
+  };
+
+  const contextPayload = buildFallbackContext(contextIssueId, inboxPayload, heartbeatContextPayload);
+
+  await Promise.all([
+    writeJsonFile(files.runtimePath, runtimePayload),
+    writeJsonFile(files.mePath, mePayload),
+    writeJsonFile(files.inboxPath, inboxPayload),
+    writeJsonFile(files.contextPath, contextPayload),
+  ]);
+
+  await onLog(
+    "stdout",
+    `[paperclip] Refreshed Codex fallback files in ${agentHome}\n`,
+  );
+
+  return files;
+}
+
+function renderPaperclipFallbackFilesNote(input: {
+  files: PaperclipFallbackFiles | null;
+  apiUrl: string | null;
+  runId: string;
+  wakeTaskId: string | null;
+  wakeReason: string | null;
+  wakeCommentId: string | null;
+}): string {
+  if (!input.files) return "";
+  return [
+    "Paperclip fallback note:",
+    "Some Codex builds may strip PAPERCLIP_* env vars before shell/tool execution.",
+    "If your shell does not show PAPERCLIP_* values, recover from these files in AGENT_HOME:",
+    `- ${input.files.runtimePath} — current apiUrl, runId, taskId, wake metadata, and workspace metadata`,
+    `- ${input.files.mePath} — current agent identity`,
+    `- ${input.files.inboxPath} — current inbox-lite snapshot`,
+    `- ${input.files.contextPath} — heartbeat-context snapshot for the active issue when available`,
+    "Use the paperclip skill's missing-env recovery path with those files instead of relying on stale local state.",
+    `Intended heartbeat values: apiUrl=${input.apiUrl ?? "<missing>"}, runId=${input.runId}, taskId=${input.wakeTaskId ?? "<none>"}, wakeReason=${input.wakeReason ?? "<none>"}, wakeCommentId=${input.wakeCommentId ?? "<none>"}.`,
+    "",
+    "",
+  ].join("\n");
+}
+
 async function isLikelyPaperclipRepoRoot(candidate: string): Promise<boolean> {
   const [hasWorkspace, hasPackageJson, hasServerDir, hasAdapterUtilsDir] = await Promise.all([
     pathExists(path.join(candidate, "pnpm-workspace.yaml")),
@@ -427,6 +681,40 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       );
     }
   }
+  const fallbackFiles = agentHome
+    ? await writePaperclipFallbackFiles({
+        agentHome,
+        agent,
+        env,
+        runId,
+        wakeTaskId,
+        wakeReason,
+        wakeCommentId,
+        approvalId,
+        approvalStatus,
+        linkedIssueIds,
+        workspaceCwd: effectiveWorkspaceCwd,
+        workspaceSource,
+        workspaceStrategy,
+        workspaceId,
+        workspaceRepoUrl,
+        workspaceRepoRef,
+        workspaceBranch,
+        workspaceWorktreePath,
+        authToken,
+        onLog,
+      })
+    : null;
+  const fallbackFilesNote = renderPaperclipFallbackFilesNote({
+    files: fallbackFiles,
+    apiUrl: typeof env.PAPERCLIP_API_URL === "string" && env.PAPERCLIP_API_URL.trim().length > 0
+      ? env.PAPERCLIP_API_URL.trim()
+      : null,
+    runId,
+    wakeTaskId,
+    wakeReason,
+    wakeCommentId,
+  });
   const commandNotes = (() => {
     if (!instructionsFilePath) return [] as string[];
     if (instructionsPrefix.length > 0) {
@@ -457,6 +745,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const sessionHandoffNote = asString(context.paperclipSessionHandoffMarkdown, "").trim();
   const prompt = joinPromptSections([
     instructionsPrefix,
+    fallbackFilesNote,
     renderedBootstrapPrompt,
     sessionHandoffNote,
     renderedPrompt,
